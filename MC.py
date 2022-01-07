@@ -7,6 +7,9 @@ import scipy.stats as stats
 from bestfit import best_fit_distribution
 
 
+def rand01():
+    return np.random.uniform()
+
 tickers= []
 #abre o arquivo contendo os ativos no formato leitura e adiciona na lista
 with open('wallet.txt', 'r') as wallet:
@@ -28,9 +31,9 @@ for t in tickers:
 
 # cria o dataframe dos coeficientes
 tickers.remove('^BVSP')
-coef = pd.DataFrame(index = tickers)
+coeff = pd.DataFrame(index = tickers)
 # adiciona os pesos de cada ativo na carteira
-coef['weights'] = 0.1
+coeff['weights'] = 0.1
 
 #########################################################
 # transformando a cotação dos ativos em retorno/ 3 formas de fazer
@@ -48,6 +51,14 @@ lr = np.log(1 + data.pct_change())
 # criando a vetor X para o cálculo da regressão linear
 X = log_returns['^BVSP'].iloc[1:].to_numpy().reshape(-1, 1)
 
+# comparando os 3 metodos de transformar o preço em retorno
+#figure = pd.DataFrame()
+#figure['log_returns'] = log_returns['^BVSP']
+#figure['returns'] = returns['^BVSP']
+#figure['lr'] = lr['^BVSP']
+#figure['diff'] = np.log(data['^BVSP'].diff())
+#fig2 = px.line(figure)
+#fig2.show()
 
 #########################################################
 #função que realiza a regressão linear
@@ -64,9 +75,17 @@ def reglin(ativo):
 # calcula os coeficientes de cada ativo e adiciona no dataframe
 for t in tickers:   
     beta0, beta1, R2 = reglin(t)
-    coef.at[t, 'beta_0'] = beta0
-    coef.at[t, 'beta_1'] = beta1
-    coef.at[t, 'R2'] = R2
+    coeff.at[t, 'beta_0'] = beta0
+    coeff.at[t, 'beta_1'] = beta1
+    coeff.at[t, 'R2'] = R2
+
+# valor inicial do portfolio
+initial_portfolio = 10000
+# calcula a quantidade de papeis de cada ativo (valor total * peso / cotacao)
+cotas = (initial_portfolio * coeff.loc[:,'weights']) / data.iloc[-1, 1:]
+# adiciona o valor inteiro dos papeis nos coeficientes
+coeff.at[:, 'shares'] = cotas.astype(int)
+
 
 # encontra a distribuição e parametros que melhor representam os dados empíricos
 fit = pd.Series(log_returns['^BVSP'].iloc[1:])
@@ -77,7 +96,7 @@ name = bd[0:bd.find("(")]
 params = bd[bd.find("("):bd.find(")")]
 
 def rand():
-    return eval(f"stats.{name}.rvs{params}, size=(T, len(tickers)))")
+    return eval(f"stats.{name}.rvs{params})")
 
 # Monte Carlo
 # número de simulações
@@ -87,18 +106,48 @@ n_sims = 100
 T = 252
 
 # simulações da carteira
-portfolio_sims = np.full(shape=(T, n_sims), fill_value=0)
+markov_chain = np.full(shape=(T+1, n_sims), fill_value=0)
 
-initialPortfolio = 10000
+# calcula o início da cadeia de Markov: ultima cotacao do portfolio * contratos
+initial_portfolio = np.inner(coeff.loc[:,'shares'], data.iloc[-1, 1:].values)
+start = 0.5
+
+# função que calcula o CAPM
+def f(coeff, var):
+    sim = np.full(shape=(len(tickers)), fill_value=var)
+    # realiza o calcudo do CAPM: retorno = beta0 + beta1 * retorno_simulado
+    retorno_diario = coeff.loc[:,'beta_0'].values + np.multiply(coeff.loc[:,'beta_1'].values, sim)
+    # retorna a soma ponderada do retorno com os pesos
+    return np.inner(coeff.loc[:,'weights'].values, retorno_diario)
+
+
+return_list = [[] for i in range(n_sims)]
+return_accept = [[] for i in range(n_sims)]
+reject = 0
 
 for n in range(n_sims):
-    # gera as amostras aleatórias com a distribuição encontrada no teste de aderencia
-    erm = rand()
-    # realiza o calcudo do CAPM: retorno = beta0 + beta1 * (retorno_esperado - beta0)
-    retorno_diario = coef.loc[:,'beta_0'].values + np.multiply(coef.loc[:,'beta_1'].values, (erm - coef.loc[:,'beta_0'].values))
-    #transforma o retorno em preço e adiciona nas simulações do portfolio
-    portfolio_sims[:,n] = np.cumprod(np.inner(coef.loc[:,'weights'].values, retorno_diario)+1) * initialPortfolio
+    #del price_list = []
+    return_list[n].append(start)
+    return_accept[n].append(start)
+    accept = 1
+    while accept <= T:
+        # gera as amostras aleatórias com a distribuição encontrada no teste de aderencia
+        retorno_simulado = rand()
+        retorno_dia_ponderado = f(coeff, retorno_simulado)
+        razao = retorno_dia_ponderado / f(coeff, return_list[n][-1])
+        alpha = min(1, abs(razao))
+        if rand01() < alpha:
+            accept += 1
+            return_accept[n].append(retorno_dia_ponderado)
+            return_list[n].append(retorno_dia_ponderado)
+        else:
+            reject += 1
+    markov_chain[:,n] = np.cumprod(np.array(return_accept[n]) + 1) * initial_portfolio
 
+
+
+print(f'Taxa de aceitação: {(T*n_sims)/((T*n_sims) + reject)}')
+print(markov_chain)
 
 # função que calcula o VaR
 def mcVaR(returns, alpha=5):
@@ -122,18 +171,18 @@ def mcCVaR(returns, alpha=5):
         raise TypeError("Expected a pandas data series.")
 
 
-portResults = pd.Series(portfolio_sims[-1,:])
+portResults = pd.Series(markov_chain[-1,:])
 
 var = mcVaR(portResults, alpha=5)
-VaR = initialPortfolio - var
+VaR = initial_portfolio - var
 cvar = mcCVaR(portResults, alpha=5)
-CVaR = initialPortfolio - cvar
+CVaR = initial_portfolio - cvar
 
 print(f'VaR R${VaR:.2f}')
 print(f'CVaR R${CVaR:.2f}')
 
 # criação do gráfico
-fig = px.line(portfolio_sims)
+fig = px.line(markov_chain)
 fig.add_hline(y=var, line_width=2, line_dash="dot", annotation_text='VaR',
                 annotation=dict(font_size=16), annotation_position="top left")
 
