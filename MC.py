@@ -3,66 +3,99 @@ from pandas_datareader import data as web
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 import scipy.stats as stats
-from bestfit import best_fit_distribution
+from bestfit import best_fit_distribution, remove_adjacent, CVaR, markov_plot, make_pdf
 
 
 def rand01():
     return np.random.uniform()
 
 tickers= []
+
+# nome do arquivo da carteira
+wallet_name = 'wallet1'
+
 #abre o arquivo contendo os ativos no formato leitura e adiciona na lista
-with open('wallet.txt', 'r') as wallet:
+with open(f'{wallet_name}.txt', 'r') as wallet:
     for line in wallet:
         tickers.append(line.rstrip())
 
 # cria o dataframe dos ativos
 data = pd.DataFrame()
 
-# declara o intervalo de tempo
-start = "01/01/2020"
-end = "01/01/2021"
+# declara o intervalo de tempo para cálculo dos betas da reg. linear
+start_beta = "01/01/2018"
+end_beta = "01/01/2020"
 
 # realiza o download das cotações
 for t in tickers:
-    cotacao = web.DataReader(f"{t}", data_source="yahoo", start=start, end=end)
+    cotacao = web.DataReader(f"{t}", data_source="yahoo", start=start_beta, end=end_beta)
     data[t] = cotacao["Adj Close"]
+
+
+## baixa as cotações na janela de crise ##
+
+# cria o dataframe da janela de crise
+crisis_window = pd.DataFrame()
+
+# declara o intervalo de tempo da crise
+start_crisis = "01/01/2020"
+end_crisis = "01/01/2021"
+
+# realiza o download das cotacoes no intervalo de crise
+for t in tickers:
+    cotacao = web.DataReader(f"{t}", data_source="yahoo", start=start_crisis, end=end_crisis)
+    crisis_window[t] = cotacao["Adj Close"]
+
+# transforma a cotacao no tempo de crise em retorno
+crisis_return = np.log(crisis_window/crisis_window.shift())
+
+# encontra a distribuição e parametros que melhor representam os dados empiricos
+fit = crisis_return['^BVSP'].iloc[1:]
+bd = best_fit_distribution(fit)
+print(bd)
+# manipula a distribuição e parametros para criar as amostras aleatórias
+name = bd[0:bd.find("(")]
+params = bd[bd.find("("):bd.find(")")]
+
+# cria os dados para plotar a distribuicao teorica e o histograma empirico
+dist_x , dist_y = make_pdf(bd)
+hist,bins = np.histogram(crisis_return['^BVSP'].iloc[1:], bins=50, density=True)
+
+# plota o histograma dos retornos dos dados empiricos
+histo = go.Figure()
+histo.add_trace(go.Bar(x=bins, y=hist, name="Dados empíricos"))
+histo.add_trace(go.Scatter(x=dist_x, y=dist_y,line = dict(color='rgb(55, 83, 109)', width=2), name="Distribuição teórica"))
+histo.update_traces(marker_color='rgba(158,202,225,0.6)', marker_line_color='rgba(8,48,107,0.6)',
+                  marker_line_width=1)
+histo.update_layout(template='none', bargap=0, title_text="""Retorno do Ibovespa no intervalo de crise<br>"""
+                                                                f"""Distribuição teórica mais ajustada {name}{params})""")
+histo.show()
 
 
 # cria o dataframe dos coeficientes
 tickers.remove('^BVSP')
 coeff = pd.DataFrame(index = tickers)
 # adiciona os pesos de cada ativo na carteira
-coeff['weights'] = 0.1
+print(f'tickers: {len(tickers)}')
+coeff['weights'] = 1 / len(tickers)
 
 #########################################################
-# transformando a cotação dos ativos em retorno/ 3 formas de fazer
-
-# calcula o retorno através do logaritmo e normalização do preço dos ativos
+# transformando a cotacao dos ativos em retorno
+# calcula o retorno através do ln da divisão data[i]/data[i-1](normalização do preço dos ativos) => based in continuous compounding
 log_returns = np.log(data/data.shift())
 
-# calcula as variações diárias (retorno), usando pandas
-returns = data.pct_change()
-
-# calcula o log do retorno
-lr = np.log(1 + data.pct_change())
 
 #########################################################
 # criando a vetor X para o cálculo da regressão linear
 X = log_returns['^BVSP'].iloc[1:].to_numpy().reshape(-1, 1)
 
-# comparando os 3 metodos de transformar o preço em retorno
-#figure = pd.DataFrame()
-#figure['log_returns'] = log_returns['^BVSP']
-#figure['returns'] = returns['^BVSP']
-#figure['lr'] = lr['^BVSP']
-#figure['diff'] = np.log(data['^BVSP'].diff())
-#fig2 = px.line(figure)
-#fig2.show()
 
 #########################################################
 #função que realiza a regressão linear
 def reglin(ativo):
+    print(ativo)
     y = log_returns[ativo].iloc[1:].to_numpy().reshape(-1, 1)
     regr = LinearRegression()
     regr.fit(X, y)
@@ -87,108 +120,138 @@ cotas = (initial_portfolio * coeff.loc[:,'weights']) / data.iloc[-1, 1:]
 coeff.at[:, 'shares'] = cotas.astype(int)
 
 
-# encontra a distribuição e parametros que melhor representam os dados empíricos
-fit = pd.Series(log_returns['^BVSP'].iloc[1:])
-bd = best_fit_distribution(fit)
-print(bd)
-# manipula a distribuição e parametros para criar as amostras aleatórias
-name = bd[0:bd.find("(")]
-params = bd[bd.find("("):bd.find(")")]
-
+# gera a variavel aleatoria com distribuicao da analise parametrica
 def rand():
     return eval(f"stats.{name}.rvs{params})")
 
 # Monte Carlo
 # número de simulações
-n_sims = 100
+n_sims = 1000
 
 # timeframe em dias
 T = 252
 
-# simulações da carteira
-markov_chain = np.full(shape=(T+1, n_sims), fill_value=0)
 
-# calcula o início da cadeia de Markov: ultima cotacao do portfolio * contratos
+# calcula o preco do início do portifolio: ultima cotacao do portfolio * contratos
 initial_portfolio = np.inner(coeff.loc[:,'shares'], data.iloc[-1, 1:].values)
-start = 0.5
+
+# valor do inicio da Cadeia de Markov
+start = 0.1
 
 # função que calcula o CAPM
 def f(coeff, var):
-    sim = np.full(shape=(len(tickers)), fill_value=var)
+    # transforma o retorno em um vetor de retornos, um valor para cada ativo no portfolio
+    val_sim = np.full(shape=(len(tickers)), fill_value=var)
     # realiza o calcudo do CAPM: retorno = beta0 + beta1 * retorno_simulado
-    retorno_diario = coeff.loc[:,'beta_0'].values + np.multiply(coeff.loc[:,'beta_1'].values, sim)
+    retorno_diario = coeff.loc[:,'beta_0'].values + np.multiply(coeff.loc[:,'beta_1'].values, val_sim)
     # retorna a soma ponderada do retorno com os pesos
-    return np.inner(coeff.loc[:,'weights'].values, retorno_diario)
+    #return abs(np.inner(coeff.loc[:,'weights'].values, retorno_diario))
+    return np.inner(coeff.loc[:,'weights'].values, retorno_diario) + 1
 
+# cria a classe para armazenar os candidados das simulacoes
+class Candidatos():
+    def __init__(self, start):
+        self.aceitos = np.array([start])
+        self.rejeitados = np.array([0])
+        self.todos = np.array([start])
 
-return_list = [[] for i in range(n_sims)]
-return_accept = [[] for i in range(n_sims)]
-reject = 0
-
+# cria a lista que armazena os objetos dos candidatos das simulacoes
+simulation = []
 for n in range(n_sims):
-    #del price_list = []
-    return_list[n].append(start)
-    return_accept[n].append(start)
+    simulation.append(Candidatos(start))
+
+# executa a simulacao MCMC
+for n in range(n_sims):
     accept = 1
     while accept <= T:
         # gera as amostras aleatórias com a distribuição encontrada no teste de aderencia
         retorno_simulado = rand()
+        # adiciona o candidato gerado no array de todos candidatos da simulacao
+        simulation[n].todos = np.append(simulation[n].todos, retorno_simulado)
+        # realiza o cálculo baseado no CAPM e a variavel aleatoria
         retorno_dia_ponderado = f(coeff, retorno_simulado)
-        razao = retorno_dia_ponderado / f(coeff, return_list[n][-1])
-        alpha = min(1, abs(razao))
+        # razao de metropolis, f(x) / f(x-1)
+        razao = retorno_dia_ponderado / f(coeff, simulation[n].aceitos[-1])
+        alpha = min(1, razao)
         if rand01() < alpha:
             accept += 1
-            return_accept[n].append(retorno_dia_ponderado)
-            return_list[n].append(retorno_dia_ponderado)
+            # adiciona a variavel aleatoria ao array dos candidatos aceitos
+            simulation[n].aceitos = np.append(simulation[n].aceitos, retorno_simulado)
+            # repete o ultimo candidato rejeitado ao array dos rejeitados
+            simulation[n].rejeitados = np.append(simulation[n].rejeitados, simulation[n].rejeitados[-1])
+            
         else:
-            reject += 1
-    markov_chain[:,n] = np.cumprod(np.array(return_accept[n]) + 1) * initial_portfolio
+            # repete o ultimo candidato aceito ao array dos aceitos
+            simulation[n].aceitos = np.append(simulation[n].aceitos, simulation[n].aceitos[-1])
+            # adiciona a variavel aleatoria ao array dos candidatos rejeitados
+            simulation[n].rejeitados = np.append(simulation[n].rejeitados, retorno_simulado)
 
 
-
-print(f'Taxa de aceitação: {(T*n_sims)/((T*n_sims) + reject)}')
-print(markov_chain)
-
-# função que calcula o VaR
-def mcVaR(returns, alpha=5):
-    """ Input: pandas series of returns
-        Output: percentile on return distribution to a given confidence level alpha
-    """
-    if isinstance(returns, pd.Series):
-        return np.percentile(returns, alpha)
-    else:
-        raise TypeError("Expected a pandas data series.")
-
-# função que calcula o CVaR
-def mcCVaR(returns, alpha=5):
-    """ Input: pandas series of returns
-        Output: CVaR or Expected Shortfall to a given confidence level alpha
-    """
-    if isinstance(returns, pd.Series):
-        belowVaR = returns <= mcVaR(returns, alpha=alpha)
-        return returns[belowVaR].mean()
-    else:
-        raise TypeError("Expected a pandas data series.")
+###################################################
+# histograma dos retornos aceitos
+return_hist = go.Figure()
+return_hist.add_trace(go.Scatter(x=dist_x, y=dist_y,line = dict(color='rgb(55, 83, 109)', width=2), name="Distribuição teórica"))
+minn = []
+maxx = []
+for n in range(n_sims):
+    minn.append(np.min(simulation[n].aceitos[1:]))
+    maxx.append(np.max(simulation[n].aceitos[1:]))
+hist_min = np.min(minn)
+hist_max = np.max(maxx)
+for n in range(n_sims):
+    hist_return,bins_edge = np.histogram(remove_adjacent(simulation[n].aceitos[1:]), bins=50, density=True,
+                                                            range=(hist_min,hist_max))
+    return_hist.add_trace(go.Bar(x=bins_edge, y=hist_return, name=f"{n+1}", opacity=0.5))
+return_hist.update_layout(barmode='overlay', bargap=0)
+return_hist.show()
 
 
-portResults = pd.Series(markov_chain[-1,:])
+# Calcula o CVaR das simulacoes e adiciona em uma lista
+CVaR_list = []
+for n in range(n_sims):
+    CVaR_list.append(CVaR(simulation[n].aceitos[1:]))
+# exporta a lista de CVaRs em um arquivo .txt
+np.savetxt(f'{wallet_name}_CVaR.txt', CVaR_list, fmt='%4.8f')
 
-var = mcVaR(portResults, alpha=5)
-VaR = initial_portfolio - var
-cvar = mcCVaR(portResults, alpha=5)
-CVaR = initial_portfolio - cvar
 
-print(f'VaR R${VaR:.2f}')
-print(f'CVaR R${CVaR:.2f}')
+###################################################
+#calcula o CVaR histórico e plota
+wallet_crisis = crisis_return.drop('^BVSP', axis=1)
+wallet_crisis = wallet_crisis.dropna()
+for t in tickers:
+    wallet_crisis[t] = wallet_crisis[t] * coeff.loc[t,'weights']
+wallet_crisis['row_sum'] = wallet_crisis.sum(axis=1)
+historic_CVaR = CVaR(wallet_crisis['row_sum'])
 
-# criação do gráfico
-fig = px.line(markov_chain)
-fig.add_hline(y=var, line_width=2, line_dash="dot", annotation_text='VaR',
+cvar_plot = go.Figure()
+cvar_plot.add_trace(go.Box(name=f'{wallet_name}',y=CVaR_list, showlegend=True,
+                        jitter=0.5, boxmean='sd', boxpoints='all', notched=True, fillcolor='rgba(127, 96, 0, 0.5)'))
+cvar_plot.add_hline(y=historic_CVaR, line_width=1.5, annotation_text='Historic CVaR',
                 annotation=dict(font_size=16), annotation_position="top left")
+cvar_plot.update_layout(template='none', boxgap=0.8, title=f"CVaR histórico: {historic_CVaR * 100:.2f}%")              
+cvar_plot.show()
 
-fig.add_hline(y=cvar, line_width=2, line_dash="dash", annotation_text='CVaR',
-                annotation=dict(font_size=16), annotation_position="bottom left")
-                
+ratio = []
+for n in range(n_sims):
+    ratio.append(len(remove_adjacent(simulation[n].aceitos[1:])) / len(simulation[n].todos[1:]))
+print(f'Taxa de aceitação média: {np.mean(ratio) * 100:.2f}%')
+
+
+###################################################
+# criacao do grafico da evolucao do preco
+fig = go.Figure()
+days = np.arange(0, T+1)
+plotly_colors = px.colors.qualitative.Plotly
+count = int(np.ceil(n_sims / len(plotly_colors)))
+colors = []
+for i in range(count):
+    colors.extend(px.colors.qualitative.Plotly)
+
+for n,color in zip(range(n_sims),colors):
+    simulation[n].aceitos[0] = 0
+    price = np.cumprod(remove_adjacent(simulation[n].aceitos) + 1) * initial_portfolio
+    fig.add_trace(go.Scatter(x=days, y=price, mode='lines', name=f'{n+1}', line_color=color))
+
 fig.update_layout(template='none',title="Evolução do preço no tempo",
                     xaxis_title="Dias",
                     yaxis_title="Valor",
@@ -197,3 +260,5 @@ fig.update_layout(template='none',title="Evolução do preço no tempo",
                     legend_itemsizing="constant")
 
 fig.show()
+
+#markov_plot(simulation, n=3)
