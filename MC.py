@@ -7,9 +7,14 @@ import plotly.graph_objects as go
 import scipy.stats as stats
 from bestfit import best_fit_distribution, remove_adjacent, CVaR, markov_plot, make_pdf
 
+# declara a semente aleatoria
+seed = 1337
+# cria o "gerador" de numeros aleatorios baseado na semente aleatoria (container para o gerador de bits)
+np_random_gen = np.random.Generator(np.random.PCG64(seed))
 
+# retorna um valor entre 0 e 1, distribuicao uniforme
 def rand01():
-    return np.random.uniform()
+    return np_random_gen.uniform()
 
 tickers= []
 
@@ -56,7 +61,7 @@ fit = crisis_return['^BVSP'].iloc[1:]
 bd = best_fit_distribution(fit)
 print(bd)
 # manipula a distribuição e parametros para criar as amostras aleatórias
-name = bd[0:bd.find("(")]
+dist_name = bd[0:bd.find("(")]
 params = bd[bd.find("("):bd.find(")")]
 
 # cria os dados para plotar a distribuicao teorica e o histograma empirico
@@ -70,7 +75,7 @@ histo.add_trace(go.Scatter(x=dist_x, y=dist_y,line = dict(color='rgb(55, 83, 109
 histo.update_traces(marker_color='rgba(158,202,225,0.6)', marker_line_color='rgba(8,48,107,0.6)',
                   marker_line_width=1)
 histo.update_layout(template='none', bargap=0, title_text="""Retorno do Ibovespa no intervalo de crise<br>"""
-                                                                f"""Distribuição teórica mais ajustada {name}{params})""")
+                                                                f"""Distribuição teórica mais ajustada {dist_name}{params})""")
 histo.show()
 
 
@@ -119,10 +124,13 @@ cotas = (initial_portfolio * coeff.loc[:,'weights']) / data.iloc[-1, 1:]
 # adiciona o valor inteiro dos papeis nos coeficientes
 coeff.at[:, 'shares'] = cotas.astype(int)
 
-
+# busca a distribuicao encontrada na analise parametrica
+scipy_random_gen = getattr(stats, dist_name)
+# usa o mesmo gerador(semente) numpy para gerar as variaveis da analise parametrica
+scipy_random_gen.random_state = np_random_gen
 # gera a variavel aleatoria com distribuicao da analise parametrica
 def rand():
-    return eval(f"stats.{name}.rvs{params})")
+    return eval(f"scipy_random_gen.rvs{params})")
 
 # Monte Carlo
 # número de simulações
