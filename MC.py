@@ -16,7 +16,7 @@ np_random_gen = np.random.Generator(np.random.PCG64(seed))
 def rand01():
     return np_random_gen.uniform()
 
-tickers= []
+tickers = []
 
 # nome do arquivo da carteira
 wallet_name = 'wallet1'
@@ -44,20 +44,29 @@ for t in tickers:
 # cria o dataframe da janela de crise
 crisis_window = pd.DataFrame()
 
-# declara o intervalo de tempo da crise
-start_crisis = "01/01/2020"
-end_crisis = "01/01/2021"
+# declara o intervalo de tempo da crise test
+start_crisis_test = "01/01/2020"
+end_crisis_test = "01/01/2021"
 
 # realiza o download das cotacoes no intervalo de crise
 for t in tickers:
-    cotacao = web.DataReader(f"{t}", data_source="yahoo", start=start_crisis, end=end_crisis)
+    cotacao = web.DataReader(f"{t}", data_source="yahoo", start=start_crisis_test, end=end_crisis_test)
     crisis_window[t] = cotacao["Adj Close"]
 
 # transforma a cotacao no tempo de crise em retorno
-crisis_return = np.log(crisis_window/crisis_window.shift())
+crisis_test_return = np.log(crisis_window/crisis_window.shift())
 
-# encontra a distribuição e parametros que melhor representam os dados empiricos
-fit = crisis_return['^BVSP'].iloc[1:]
+#################################################################
+# realiza o download do indice no intervalo de crise treino
+start_crisis_train = "01/01/2008"
+end_crisis_train = "01/01/2009"
+index_crisis_train = web.DataReader('^BVSP', data_source="yahoo", start=start_crisis_train, end=end_crisis_train)
+
+# calcula o retorno do indice no intervalo de crise treino
+return_crisis_train = np.log(index_crisis_train["Adj Close"]/index_crisis_train["Adj Close"].shift())
+
+# encontra a distribuição e parametros que melhor representam os dados empiricos do indice no intervalo de crise treino
+fit = return_crisis_train.iloc[1:]
 bd = best_fit_distribution(fit)
 print(bd)
 # manipula a distribuição e parametros para criar as amostras aleatórias
@@ -66,7 +75,7 @@ params = bd[bd.find("("):bd.find(")")]
 
 # cria os dados para plotar a distribuicao teorica e o histograma empirico
 dist_x , dist_y = make_pdf(bd)
-hist,bins = np.histogram(crisis_return['^BVSP'].iloc[1:], bins=50, density=True)
+hist,bins = np.histogram(fit, bins=50, density=True)
 
 # plota o histograma dos retornos dos dados empiricos
 histo = go.Figure()
@@ -74,10 +83,10 @@ histo.add_trace(go.Bar(x=bins, y=hist, name="Dados empíricos"))
 histo.add_trace(go.Scatter(x=dist_x, y=dist_y,line = dict(color='rgb(55, 83, 109)', width=2), name="Distribuição teórica"))
 histo.update_traces(marker_color='rgba(158,202,225,0.6)', marker_line_color='rgba(8,48,107,0.6)',
                   marker_line_width=1)
-histo.update_layout(template='none', bargap=0, title_text="""Retorno do Ibovespa no intervalo de crise<br>"""
+histo.update_layout(template='none', bargap=0, title_text=f"""Retorno do Ibovespa no intervalo de crise de {start_crisis_train} a {end_crisis_train}<br>"""
                                                                 f"""Distribuição teórica mais ajustada {dist_name}{params})""")
 histo.show()
-
+#################################################################
 
 # cria o dataframe dos coeficientes
 tickers.remove('^BVSP')
@@ -166,6 +175,7 @@ class Candidatos():
 # cria a lista que armazena os objetos dos candidatos das simulacoes
 simulation = []
 for n in range(n_sims):
+    # adicionando o objeto (que armazena os candidatos) na lista
     simulation.append(Candidatos(start))
 
 # executa a simulacao MCMC
@@ -224,7 +234,7 @@ np.savetxt(f'{wallet_name}_CVaR.txt', CVaR_list, fmt='%4.8f')
 
 ###################################################
 #calcula o CVaR histórico e plota
-wallet_crisis = crisis_return.drop('^BVSP', axis=1)
+wallet_crisis = crisis_test_return.drop('^BVSP', axis=1)
 wallet_crisis = wallet_crisis.dropna()
 for t in tickers:
     wallet_crisis[t] = wallet_crisis[t] * coeff.loc[t,'weights']
@@ -234,15 +244,15 @@ historic_CVaR = CVaR(wallet_crisis['row_sum'])
 cvar_plot = go.Figure()
 cvar_plot.add_trace(go.Box(name=f'{wallet_name}',y=CVaR_list, showlegend=True,
                         jitter=0.5, boxmean='sd', boxpoints='all', notched=True, fillcolor='rgba(127, 96, 0, 0.5)'))
-cvar_plot.add_hline(y=historic_CVaR, line_width=1.5, annotation_text='Historic CVaR',
+cvar_plot.add_hline(y=historic_CVaR, line_width=1.5, annotation_text=f'Historic CVaR {start_crisis_test} - {end_crisis_test}',
                 annotation=dict(font_size=16), annotation_position="top left")
 cvar_plot.update_layout(template='none', boxgap=0.8, title=f"CVaR histórico: {historic_CVaR * 100:.2f}%")              
 cvar_plot.show()
 
-ratio = []
+accept_rate = []
 for n in range(n_sims):
-    ratio.append(len(remove_adjacent(simulation[n].aceitos[1:])) / len(simulation[n].todos[1:]))
-print(f'Taxa de aceitação média: {np.mean(ratio) * 100:.2f}%')
+    accept_rate.append(len(remove_adjacent(simulation[n].aceitos[1:])) / len(simulation[n].todos[1:]))
+print(f'Taxa de aceitação média: {np.mean(accept_rate) * 100:.2f}%')
 
 
 ###################################################
