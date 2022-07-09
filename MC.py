@@ -71,7 +71,7 @@ bd = best_fit_distribution(fit)
 print(bd)
 # manipula a distribuição e parametros para criar as amostras aleatórias
 dist_name = bd[0:bd.find("(")]
-params = bd[bd.find("("):bd.find(")")]
+params = bd[bd.find("(")+1:bd.find(")")]
 
 # cria os dados para plotar a distribuicao teorica e o histograma empirico
 dist_x , dist_y = make_pdf(bd)
@@ -84,7 +84,7 @@ histo.add_trace(go.Scatter(x=dist_x, y=dist_y,line = dict(color='rgb(55, 83, 109
 histo.update_traces(marker_color='rgba(158,202,225,0.6)', marker_line_color='rgba(8,48,107,0.6)',
                   marker_line_width=1)
 histo.update_layout(template='none', bargap=0, title_text=f"""Retorno do Ibovespa no intervalo de crise de {start_crisis_train} a {end_crisis_train}<br>"""
-                                                                f"""Distribuição teórica mais ajustada {dist_name}{params})""")
+                                                                f"""Distribuição teórica mais ajustada {dist_name}({params})""")
 histo.show()
 #################################################################
 
@@ -139,11 +139,16 @@ scipy_random_gen = getattr(stats, dist_name)
 scipy_random_gen.random_state = np_random_gen
 # gera a variavel aleatoria com distribuicao da analise parametrica
 def rand():
-    return eval(f"scipy_random_gen.rvs{params})")
+    return eval(f"scipy_random_gen.rvs({params})")
+
+# gera o numero aleatorio q(x) dado o valor de x ## funcao densidade de probabilidade pdf(x)
+def pdf(x):
+    return eval(f"scipy_random_gen.pdf({x}, {params})")
+
 
 # Monte Carlo
 # número de simulações
-n_sims = 1000
+n_sims = 100
 
 # timeframe em dias
 T = 252
@@ -187,9 +192,9 @@ for n in range(n_sims):
         # adiciona o candidato gerado no array de todos candidatos da simulacao
         simulation[n].todos = np.append(simulation[n].todos, retorno_simulado)
         # realiza o cálculo baseado no CAPM e a variavel aleatoria
-        retorno_dia_ponderado = f(coeff, retorno_simulado)
-        # razao de metropolis, f(x) / f(x-1)
-        razao = retorno_dia_ponderado / f(coeff, simulation[n].aceitos[-1])
+        retorno_dia_ponderado = f(coeff, retorno_simulado) * pdf(simulation[n].aceitos[-1]) # pdf(x-1)
+        # razao de metropolis, (f(x) * q(x-1)) / (f(x-1) * q(x))
+        razao = retorno_dia_ponderado / (f(coeff, simulation[n].aceitos[-1]) * pdf(retorno_simulado)) #pdf(x)
         alpha = min(1, razao)
         if rand01() < alpha:
             accept += 1
@@ -279,4 +284,4 @@ fig.update_layout(template='none',title="Evolução do preço no tempo",
 
 fig.show()
 
-#markov_plot(simulation, n=3)
+markov_plot(simulation, n=3)
