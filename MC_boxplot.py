@@ -19,7 +19,7 @@ print(f'Carteira 3: média:{np.mean(wallet3):.4f}, desvio padrão:{np.std(wallet
 
 fig.update_layout(template='none', boxgap=0.7,
 title=f"""Blue Chips: média:{np.mean(wallet1):.4f}, desvio padrão:{np.std(wallet1):.4f}, máximo:{np.max(wallet1):.4f} e mínimo:{np.min(wallet1):.4f}<br>"""
-f"""Small Caps 2: média:{np.mean(wallet2):.4f}, desvio padrão:{np.std(wallet2):.4f}, máximo:{np.max(wallet2):.4f} e mínimo:{np.min(wallet2):.4f}<br>"""
-f"""Mista 3: média:{np.mean(wallet3):.4f}, desvio padrão:{np.std(wallet3):.4f}, máximo:{np.max(wallet3):.4f} e mínimo:{np.min(wallet3):.4f}<br>"""
+f"""Small Caps: média:{np.mean(wallet2):.4f}, desvio padrão:{np.std(wallet2):.4f}, máximo:{np.max(wallet2):.4f} e mínimo:{np.min(wallet2):.4f}<br>"""
+f"""Mista: média:{np.mean(wallet3):.4f}, desvio padrão:{np.std(wallet3):.4f}, máximo:{np.max(wallet3):.4f} e mínimo:{np.min(wallet3):.4f}<br>"""
 )
 fig.show()

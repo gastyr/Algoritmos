@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-import scipy.stats as stats
+import scipy.stats as st
 from bestfit import best_fit_distribution, remove_adjacent, CVaR, markov_plot, make_pdf
 
 # declara a semente aleatoria
@@ -134,16 +134,20 @@ cotas = (initial_portfolio * coeff.loc[:,'weights']) / data.iloc[-1, 1:]
 coeff.at[:, 'shares'] = cotas.astype(int)
 
 # busca a distribuicao encontrada na analise parametrica
-scipy_random_gen = getattr(stats, dist_name)
+scipy_random_gen = getattr(st, dist_name)
 # usa o mesmo gerador(semente) numpy para gerar as variaveis da analise parametrica
 scipy_random_gen.random_state = np_random_gen
+# compila a string, evitando que passe pelo parser por cada chamada de funcao
+code_rand = compile(f"scipy_random_gen.rvs({params})", "<string>", "eval")
 # gera a variavel aleatoria com distribuicao da analise parametrica
 def rand():
-    return eval(f"scipy_random_gen.rvs({params})")
+    return eval(code_rand)
 
+# compila a string, evitando que passe pelo parser por cada chamada de funcao
+code_pdf = compile(f"scipy_random_gen.pdf(x, {params})", "<string>", "eval")
 # gera o numero aleatorio q(x) dado o valor de x ## funcao densidade de probabilidade pdf(x)
 def pdf(x):
-    return eval(f"scipy_random_gen.pdf({x}, {params})")
+    return eval(code_pdf, {"scipy_random_gen": scipy_random_gen}, {"x": x})
 
 
 # Monte Carlo
@@ -185,6 +189,7 @@ for n in range(n_sims):
 
 # executa a simulacao MCMC
 for n in range(n_sims):
+    print(f'Executando simulação {n+1}')
     accept = 1
     while accept <= T:
         # gera as amostras aleatórias com a distribuição encontrada no teste de aderencia
@@ -273,7 +278,7 @@ for i in range(count):
 for n,color in zip(range(n_sims),colors):
     simulation[n].aceitos[0] = 0
     price = np.cumprod(remove_adjacent(simulation[n].aceitos) + 1) * initial_portfolio
-    fig.add_trace(go.Scatter(x=days, y=price, mode='lines', name=f'{n+1}', line_color=color))
+    fig.add_trace(go.Scatter(y=price, mode='lines', name=f'{n+1}', line_color=color))
 
 fig.update_layout(template='none',title="Evolução do preço no tempo",
                     xaxis_title="Dias",
@@ -284,4 +289,4 @@ fig.update_layout(template='none',title="Evolução do preço no tempo",
 
 fig.show()
 
-markov_plot(simulation, n=3)
+#markov_plot(simulation, n=3)
