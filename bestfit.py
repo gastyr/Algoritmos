@@ -159,6 +159,31 @@ def markov_plot(candidatos, n=5):
         fig.update_layout(barmode='overlay', template='none', title=f"Cadeia de Markov da simulação {i+1}. Taxa de aceitação: {acc_rate:.2f}%")
         fig.show()
 
+######## Grafico da cadeia de Markov ########
+def markovchain_plot(wallet_name, candidatos, n=5):
+    color = '#3f3f3f'
+
+    length = len(candidatos)
+    chosen = np.linspace(0, length-1, n).astype(int)
+
+    for i in chosen:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x = np.arange(1, len(candidatos[i].aceitos)+1, 1), 
+                        y = candidatos[i].aceitos,
+                        hoverinfo = 'x+y',
+                        mode='lines',
+                        line=dict(color=color,
+                        width=1),
+                        showlegend=False,
+                        ))
+        acc_rate = len(remove_adjacent(candidatos[i].aceitos)) / len(remove_adjacent(candidatos[i].todos)) * 100
+        fig.update_layout(template='none', width=1200, height=800,
+                            title=f"Cadeia de Markov da simulação {i+1}. Taxa de aceitação: {acc_rate:.2f}%, "
+                            f"{len(remove_adjacent(candidatos[i].todos))} candidatos propostos.")
+        fig.write_image(f"imagens/mcmc_simulacao{i+1}_{wallet_name}.png")
+        fig.show()
+
+
 # função que calcula o VaR
 def mcVaR(returns, alpha=5):
     """ Input: pandas series of returns

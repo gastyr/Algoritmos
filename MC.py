@@ -5,7 +5,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import scipy.stats as st
-from bestfit import best_fit_distribution, remove_adjacent, CVaR, markov_plot, make_pdf
+from bestfit import best_fit_distribution, remove_adjacent, CVaR, markovchain_plot, make_pdf
 
 # declara a semente aleatoria
 seed = 1337
@@ -55,6 +55,7 @@ for t in tickers:
 
 # transforma a cotacao no tempo de crise em retorno
 crisis_test_return = np.log(crisis_window/crisis_window.shift())
+crisis_test_return = crisis_test_return.dropna()
 
 #################################################################
 # realiza o download do indice no intervalo de crise treino
@@ -83,8 +84,11 @@ histo.add_trace(go.Bar(x=bins, y=hist, name="Dados empíricos"))
 histo.add_trace(go.Scatter(x=dist_x, y=dist_y,line = dict(color='rgb(55, 83, 109)', width=2), name="Distribuição teórica"))
 histo.update_traces(marker_color='rgba(158,202,225,0.6)', marker_line_color='rgba(8,48,107,0.6)',
                   marker_line_width=1)
-histo.update_layout(template='none', bargap=0, title_text=f"""Retorno do Ibovespa no intervalo de crise de {start_crisis_train} a {end_crisis_train}<br>"""
-                                                                f"""Distribuição teórica mais ajustada {dist_name}({params})""")
+histo.update_layout(template='none', bargap=0, width=1200, height=800, legend=dict(x=0.75, y=0.9,font=dict(size=20)), margin=dict(t=15,b=15,l=15,r=15,pad=0),
+                    # title_text=f"""Retorno do Ibovespa no intervalo de crise de {start_crisis_train} a {end_crisis_train}<br>"""
+                    #                                             f"""Distribuição teórica mais ajustada {dist_name}({params})"""
+                    )
+histo.write_image(f"imagens/analise_parametrica_{wallet_name}.png")
 histo.show()
 #################################################################
 
@@ -152,11 +156,18 @@ def pdf(x):
 
 # Monte Carlo
 # número de simulações
-n_sims = 100
+n_sims = 200
 
 # timeframe em dias
-T = 252
+T = len(crisis_test_return.index)
+#T = 252
 
+# cria a paleta de cores para os graficos
+plotly_colors = px.colors.qualitative.Plotly
+count = int(np.ceil(n_sims / len(plotly_colors)))
+colors = []
+for i in range(count):
+    colors.extend(plotly_colors)
 
 # calcula o preco do início do portifolio: ultima cotacao do portfolio * contratos
 initial_portfolio = np.inner(coeff.loc[:,'shares'], data.iloc[-1, 1:].values)
@@ -218,7 +229,7 @@ for n in range(n_sims):
 ###################################################
 # histograma dos retornos aceitos
 return_hist = go.Figure()
-return_hist.add_trace(go.Scatter(x=dist_x, y=dist_y,line = dict(color='rgb(55, 83, 109)', width=2), name="Distribuição teórica"))
+return_hist.add_trace(go.Scatter(x=dist_x, y=dist_y,line = dict(color='rgb(55, 83, 109)', width=2), showlegend=False))#name="Distribuição teórica"))
 minn = []
 maxx = []
 for n in range(n_sims):
@@ -226,67 +237,117 @@ for n in range(n_sims):
     maxx.append(np.max(simulation[n].aceitos[1:]))
 hist_min = np.min(minn)
 hist_max = np.max(maxx)
-for n in range(n_sims):
+for n,color in zip(range(n_sims),colors):
     hist_return,bins_edge = np.histogram(remove_adjacent(simulation[n].aceitos[1:]), bins=50, density=True,
                                                             range=(hist_min,hist_max))
-    return_hist.add_trace(go.Bar(x=bins_edge, y=hist_return, name=f"{n+1}", opacity=0.5))
-return_hist.update_layout(barmode='overlay', bargap=0)
+    return_hist.add_trace(go.Bar(x=bins_edge, y=hist_return, name=f"{n+1}", opacity=0.5, marker_color=color))
+return_hist.update_layout(template='none',  width=1200, height=800, legend=dict(font=dict(size=20)), margin=dict(l=15,r=15,b=15,t=15,pad=0),
+                            #title='Retornos simulados do IBOV', 
+                            barmode='overlay', bargap=0)
+return_hist.update_traces( marker_line_color='rgba(8,48,107,0.6)', marker_line_width=1)
+return_hist.write_image(f"imagens/retorno_simulado_{wallet_name}.png")
 return_hist.show()
 
 
-# Calcula o CVaR das simulacoes e adiciona em uma lista
-CVaR_list = []
+###################################################
+# CVaR da carteira com o retorno simulado, calcula o CVaR para cada serie temporal
+CVaR_carteira = []
 for n in range(n_sims):
-    CVaR_list.append(CVaR(simulation[n].aceitos[1:]))
-# exporta a lista de CVaRs em um arquivo .txt
-np.savetxt(f'{wallet_name}_CVaR.txt', CVaR_list, fmt='%4.8f')
+    # auxiliar recebe os aceitos unicos
+    aux = remove_adjacent(simulation[n].aceitos[1:])
+    # calcula o retorno da carteira pela funcao CAPM do retorno do IBOV
+    CAPM_aceitos = np.array([f(coeff, i) - 1 for i in aux])
+    # adiciona a lista o CVaR do retorno da carteira
+    CVaR_carteira.append(CVaR(CAPM_aceitos))
+# exporta os CVaRs da carteira em um arquivo .txt
+np.savetxt(f'{wallet_name}_CVaR.txt', CVaR_carteira, fmt='%4.8f')
 
 
 ###################################################
 #calcula o CVaR histórico e plota
 wallet_crisis = crisis_test_return.drop('^BVSP', axis=1)
-wallet_crisis = wallet_crisis.dropna()
 for t in tickers:
+    # pondera o retorno das acoes no intervalo de crise teste com os pesos
     wallet_crisis[t] = wallet_crisis[t] * coeff.loc[t,'weights']
+# soma o retorno ponderado de cada acao para obter o retorno diario da carteira
 wallet_crisis['row_sum'] = wallet_crisis.sum(axis=1)
-historic_CVaR = CVaR(wallet_crisis['row_sum'])
+# calcula o CVaR do retorno diario da carteira no intervalo de crise teste
+historic_CVaR = CVaR(wallet_crisis['row_sum'].values)
 
 cvar_plot = go.Figure()
-cvar_plot.add_trace(go.Box(name=f'{wallet_name}',y=CVaR_list, showlegend=True,
-                        jitter=0.5, boxmean='sd', boxpoints='all', notched=True, fillcolor='rgba(127, 96, 0, 0.5)'))
+cvar_plot.add_trace(go.Box(name='', y=CVaR_carteira, showlegend=False,
+                        jitter=0.5, boxmean='sd', boxpoints='all', notched=False, fillcolor='rgba(249,188,33,0.5)'))
 cvar_plot.add_hline(y=historic_CVaR, line_width=1.5, annotation_text=f'Historic CVaR {start_crisis_test} - {end_crisis_test}',
                 annotation=dict(font_size=16), annotation_position="top left")
-cvar_plot.update_layout(template='none', boxgap=0.8, title=f"CVaR histórico: {historic_CVaR * 100:.2f}%")              
+cvar_plot.update_traces(marker_color='#f74c06')
+cvar_plot.update_layout(template='none', boxgap=0.8,  width=1200, height=800, margin=dict(l=20,r=15,b=15,t=15,pad=0),
+                        #title=f"CVaR histórico: {historic_CVaR * 100:.2f}%, simulação da carteira: {wallet_name}, N de séries temporais = {n_sims}"
+                        )             
+cvar_plot.write_image(f"imagens/cvar_simulados_{wallet_name}.png")
 cvar_plot.show()
 
+
+### calcula a taxa de aceitacao da simulacao ###
 accept_rate = []
 for n in range(n_sims):
     accept_rate.append(len(remove_adjacent(simulation[n].aceitos[1:])) / len(simulation[n].todos[1:]))
 print(f'Taxa de aceitação média: {np.mean(accept_rate) * 100:.2f}%')
+### cria o grafico de aceitacao da simulacao ###
+accep_rate_chart = go.Figure()
+accept_rate_array = np.around(np.array(accept_rate) * 100, decimals = 2)
+accep_rate_chart.add_trace(go.Scatter(x = np.arange(1, n_sims+1, 1), 
+                        y = accept_rate_array,
+                        hoverinfo = 'x+y',
+                        mode='lines',
+                        line=dict(color='#0061ff',
+                        width=2),
+                        showlegend=False,
+                        ))
+accep_rate_chart.update_layout(template='none', width=1200, height=800, xaxis_title="Séries Temporais",yaxis_title="Taxa de aceitação",
+                                    margin=dict(l=35,r=15,b=35,t=15,pad=0))
+accep_rate_chart.write_image(f"imagens/aceitacao_{wallet_name}.png")
+accep_rate_chart.show()
 
 
 ###################################################
 # criacao do grafico da evolucao do preco
 fig = go.Figure()
-days = np.arange(0, T+1)
-plotly_colors = px.colors.qualitative.Plotly
-count = int(np.ceil(n_sims / len(plotly_colors)))
-colors = []
-for i in range(count):
-    colors.extend(px.colors.qualitative.Plotly)
+# transforma os retornos empiricos da carteira em preco
+true_wallet_path = np.cumprod(np.insert(wallet_crisis['row_sum'].values, 0, 0) + 1) * initial_portfolio
+# cria uma lista para armazenar o preco simulado no ultimo dia
+last_price = []
 
 for n,color in zip(range(n_sims),colors):
-    simulation[n].aceitos[0] = 0
-    price = np.cumprod(remove_adjacent(simulation[n].aceitos) + 1) * initial_portfolio
+    # auxiliar recebe apenas os aceitos unicos
+    aux = remove_adjacent(simulation[n].aceitos)
+    # aplica a funcao baseada no CAPM no retorno simulado do IBOV
+    CAPM_aceitos = np.array([f(coeff, i) for i in aux])
+    # modifica o start da cadeia de markov para 1, para normalizacao dos dados
+    CAPM_aceitos[0] = 1
+    # calcula o preco a partir do produto cumulativo do fator de capitalizacao 
+    price = np.cumprod(CAPM_aceitos) * initial_portfolio
+    # separa o ultimo preco da serie temporal para calcular o CVaR da simulacao
+    last_price.append(price[-1])
+    # adiciona ao grafico a serie temporal ("caminho" do preco)
     fig.add_trace(go.Scatter(y=price, mode='lines', name=f'{n+1}', line_color=color))
 
-fig.update_layout(template='none',title="Evolução do preço no tempo",
-                    xaxis_title="Dias",
-                    yaxis_title="Valor",
-                    legend_title="Simulações",
-                    legend_itemclick="toggleothers",
-                    legend_itemsizing="constant")
+# adiciona no grafico a evolucao de preco real da carteira
+fig.add_trace(go.Scatter(y=true_wallet_path, mode='lines', name='empírico', line_color='black'))
 
+# calcula o cvar do ultimo preco simulado
+last_return_CVaR = CVaR(last_price)
+# adiciona no grafico a linha do CVaR do ultimo preco simulado
+fig.add_hline(y=last_return_CVaR, line_width=1.5, annotation_text=f'Simulated CVaR {last_return_CVaR:.2f}',
+                line_dash="dash", annotation=dict(font_size=16), annotation_position="top left")
+
+fig.update_layout(template='none',width=1200, height=800, margin=dict(l=25,r=0,b=25,t=15,pad=0),
+                    #title=f"Evolução do preço no tempo {wallet_name}, N de séries temporais = {n_sims}",
+                    xaxis_title="Dias",
+                    #yaxis_title="Valor",
+                    legend_title="Simulações",
+                    legend_itemsizing="constant")
+fig.write_image(f"imagens/evolucao_preco_{wallet_name}.png")
 fig.show()
 
-#markov_plot(simulation, n=3)
+# plota o grafico da cadeia de markov de algumas simulacoes (series temporais)
+markovchain_plot(wallet_name, simulation, n=5)
