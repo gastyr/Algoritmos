@@ -81,7 +81,7 @@ hist,bins = np.histogram(fit, bins=50, density=True)
 # plota o histograma dos retornos dos dados empiricos
 histo = go.Figure()
 histo.add_trace(go.Bar(x=bins, y=hist, name="Dados empíricos"))
-histo.add_trace(go.Scatter(x=dist_x, y=dist_y,line = dict(color='rgb(55, 83, 109)', width=2), name="Distribuição teórica"))
+histo.add_trace(go.Scatter(x=dist_x, y=dist_y,line = dict(color='rgb(20, 20, 20)', width=2), name="Distribuição teórica"))
 histo.update_traces(marker_color='rgba(158,202,225,0.6)', marker_line_color='rgba(8,48,107,0.6)',
                   marker_line_width=1)
 histo.update_layout(template='none', bargap=0, width=1200, height=800, legend=dict(x=0.75, y=0.9,font=dict(size=20)), margin=dict(t=15,b=15,l=15,r=15,pad=0),
@@ -229,12 +229,17 @@ for n in range(n_sims):
 ###################################################
 # histograma dos retornos aceitos
 return_hist = go.Figure()
-return_hist.add_trace(go.Scatter(x=dist_x, y=dist_y,line = dict(color='rgb(55, 83, 109)', width=2), showlegend=False))#name="Distribuição teórica"))
+return_hist.add_trace(go.Scatter(x=dist_x, y=dist_y,line = dict(color='rgb(20, 20, 20)', width=2), showlegend=False))#name="Distribuição teórica"))
 minn = []
 maxx = []
+total_accept_candidates = []
+total_return_candidates = []
+
 for n in range(n_sims):
     minn.append(np.min(simulation[n].aceitos[1:]))
     maxx.append(np.max(simulation[n].aceitos[1:]))
+    total_accept_candidates.extend(remove_adjacent(simulation[n].aceitos[1:]))
+    total_return_candidates.extend(simulation[n].todos[1:])
 hist_min = np.min(minn)
 hist_max = np.max(maxx)
 for n,color in zip(range(n_sims),colors):
@@ -248,6 +253,21 @@ return_hist.update_traces( marker_line_color='rgba(8,48,107,0.6)', marker_line_w
 return_hist.write_image(f"imagens/retorno_simulado_{wallet_name}.png")
 return_hist.show()
 
+### histograma dos candidatos totais e aceitos ###
+total_return_hist = go.Figure()
+
+hist_return,bins_edge = np.histogram(np.array(total_return_candidates), bins=50, density=True, range=(hist_min,hist_max))
+total_return_hist.add_trace(go.Bar(x=bins_edge, y=hist_return, opacity=0.5, marker_color='rgba(232, 28, 255, 0.7)', name='Todos candidatos'))
+
+hist_return,bins_edge = np.histogram(np.array(total_accept_candidates), bins=50, density=True, range=(hist_min,hist_max))
+total_return_hist.add_trace(go.Bar(x=bins_edge, y=hist_return, opacity=0.5, marker_color='rgba(64, 201, 255, 0.7)', name='Candidatos aceitos'))
+
+total_return_hist.add_trace(go.Scatter(x=dist_x, y=dist_y,line = dict(color='rgb(20, 20, 20)', width=2), name='Distribuição teórica'))
+total_return_hist.update_layout(template='none',  width=1200, height=800, legend=dict(x=0.75, y=0.9,font=dict(size=20)), margin=dict(l=15,r=15,b=15,t=15,pad=0),
+                            barmode='overlay', bargap=0)
+total_return_hist.update_traces(marker_line_color='rgba(8,48,107,0.6)', marker_line_width=1)                            
+total_return_hist.write_image(f"imagens/retorno_total_vs_simulado_{wallet_name}.png")
+total_return_hist.show()
 
 ###################################################
 # CVaR da carteira com o retorno simulado, calcula o CVaR para cada serie temporal

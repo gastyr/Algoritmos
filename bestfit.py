@@ -64,8 +64,8 @@ def make_pdf(dist, size=1000):
     params = dist[dist.find("(")+1:dist.find(")")]
     
     # pega os pontos de inicio e fim
-    start = eval(f'st.{name}.ppf(0.01, {params})')
-    end = eval(f'st.{name}.ppf(0.99, {params})')
+    start = eval(f'st.{name}.ppf(0.001, {params})')
+    end = eval(f'st.{name}.ppf(0.999, {params})')
 
     # discretiza o eixo x e cria a funcao de densidade de probabilidade
     x = np.linspace(start, end, size)
