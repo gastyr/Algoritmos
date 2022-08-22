@@ -5,7 +5,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import scipy.stats as st
-from bestfit import best_fit_distribution, remove_adjacent, CVaR, markovchain_plot, make_pdf
+from bestfit import best_fit_distribution, remove_adjacent, CVaR, VaR, markovchain_plot, make_pdf, ts_plot
 
 # declara a semente aleatoria
 seed = 1337
@@ -172,6 +172,11 @@ for i in range(count):
 # calcula o preco do início do portifolio: ultima cotacao do portfolio * contratos
 initial_portfolio = np.inner(coeff.loc[:,'shares'], data.iloc[-1, 1:].values)
 
+# nova forma de calcular os pesos, com mais precisao
+#for t in tickers:
+#    coeff.at[t,'weights'] = (coeff.loc[t,'shares'] * data[t].iloc[-1]) / initial_portfolio
+#print(coeff)
+#print(coeff['weights'].sum())
 # valor do inicio da Cadeia de Markov
 start = 0.1
 
@@ -198,6 +203,10 @@ for n in range(n_sims):
     # adicionando o objeto (que armazena os candidatos) na lista
     simulation.append(Candidatos(start))
 
+# modificacao Thiago
+nova = getattr(st, 'norm')
+nova.random_state = np_random_gen
+
 # executa a simulacao MCMC
 for n in range(n_sims):
     print(f'Executando simulação {n+1}')
@@ -205,12 +214,15 @@ for n in range(n_sims):
     while accept <= T:
         # gera as amostras aleatórias com a distribuição encontrada no teste de aderencia
         retorno_simulado = rand()
+        #retorno_simulado = nova.rvs(loc=0, scale=0.05)
         # adiciona o candidato gerado no array de todos candidatos da simulacao
         simulation[n].todos = np.append(simulation[n].todos, retorno_simulado)
         # realiza o cálculo baseado no CAPM e a variavel aleatoria
         retorno_dia_ponderado = f(coeff, retorno_simulado) * pdf(simulation[n].aceitos[-1]) # pdf(x-1)
+        #retorno_dia_ponderado = f(coeff, retorno_simulado) * nova.pdf(simulation[n].aceitos[-1], loc=0, scale=0.05) # pdf(x-1)
         # razao de metropolis, (f(x) * q(x-1)) / (f(x-1) * q(x))
         razao = retorno_dia_ponderado / (f(coeff, simulation[n].aceitos[-1]) * pdf(retorno_simulado)) #pdf(x)
+        #razao = retorno_dia_ponderado / (f(coeff, simulation[n].aceitos[-1]) * nova.pdf(retorno_simulado, loc=0, scale=0.05)) #pdf(x)
         alpha = min(1, razao)
         if rand01() < alpha:
             accept += 1
@@ -311,7 +323,7 @@ cvar_plot.show()
 accept_rate = []
 for n in range(n_sims):
     accept_rate.append(len(remove_adjacent(simulation[n].aceitos[1:])) / len(simulation[n].todos[1:]))
-print(f'Taxa de aceitação média: {np.mean(accept_rate) * 100:.2f}%')
+
 ### cria o grafico de aceitacao da simulacao ###
 accep_rate_chart = go.Figure()
 accept_rate_array = np.around(np.array(accept_rate) * 100, decimals = 2)
@@ -336,6 +348,8 @@ fig = go.Figure()
 true_wallet_path = np.cumprod(np.insert(wallet_crisis['row_sum'].values, 0, 0) + 1) * initial_portfolio
 # cria uma lista para armazenar o preco simulado no ultimo dia
 last_price = []
+# cria uma lista para armazenar a evolucao do capital da serie temporal
+time_series = []
 
 for n,color in zip(range(n_sims),colors):
     # auxiliar recebe apenas os aceitos unicos
@@ -344,8 +358,10 @@ for n,color in zip(range(n_sims),colors):
     CAPM_aceitos = np.array([f(coeff, i) for i in aux])
     # modifica o start da cadeia de markov para 1, para normalizacao dos dados
     CAPM_aceitos[0] = 1
-    # calcula o preco a partir do produto cumulativo do fator de capitalizacao 
-    price = np.cumprod(CAPM_aceitos) * initial_portfolio
+    # calcula o preco a partir do produto cumulativo do fator de capitalizacao e arredonda para 2 decimais
+    price = np.around(np.cumprod(CAPM_aceitos) * initial_portfolio, decimals = 2)
+    # adiciona o "caminho" do preco na lista de series temporais
+    time_series.append(price)
     # separa o ultimo preco da serie temporal para calcular o CVaR da simulacao
     last_price.append(price[-1])
     # adiciona ao grafico a serie temporal ("caminho" do preco)
@@ -356,9 +372,13 @@ fig.add_trace(go.Scatter(y=true_wallet_path, mode='lines', name='empírico', lin
 
 # calcula o cvar do ultimo preco simulado
 last_return_CVaR = CVaR(last_price)
+last_return_VaR = VaR(last_price)
 # adiciona no grafico a linha do CVaR do ultimo preco simulado
 fig.add_hline(y=last_return_CVaR, line_width=1.5, annotation_text=f'Simulated CVaR {last_return_CVaR:.2f}',
                 line_dash="dash", annotation=dict(font_size=16), annotation_position="top left")
+
+#fig.add_hline(y=last_return_VaR, line_width=1.5, annotation_text=f'Simulated VaR {last_return_VaR:.2f}',
+#                 annotation=dict(font_size=16), annotation_position="top left")                
 
 fig.update_layout(template='none',width=1200, height=800, margin=dict(l=25,r=0,b=25,t=15,pad=0),
                     #title=f"Evolução do preço no tempo {wallet_name}, N de séries temporais = {n_sims}",
@@ -369,5 +389,21 @@ fig.update_layout(template='none',width=1200, height=800, margin=dict(l=25,r=0,b
 fig.write_image(f"imagens/evolucao_preco_{wallet_name}.png")
 fig.show()
 
+# mostra algumas informações importantes
+print(f'Nome da carteira: {wallet_name}')
+print(f'Número de séries temporais: {n_sims}')
+print(f'Taxa de aceitação média: {np.mean(accept_rate) * 100:.2f}%')
+beta_carteira = sum(coeff['beta_1'].values * coeff['weights'].values)
+print(f'Beta da carteira: {beta_carteira:.2f}')
+R2_carteira = np.inner(coeff['R2'].values, coeff['weights'].values)
+print(f'R2 da carteira: {R2_carteira:.2f}')
+print(f'Capital inicial: {initial_portfolio:.2f}')
+print(f'Valor empírico mínimo: {np.min(true_wallet_path):.2f}')
+print(f'Última cotação da carteira real: {true_wallet_path[-1]:.2f}')
+print(f'VaR simulado: {last_return_VaR:.2f}')
+print(f'CVaR simulado: {last_return_CVaR:.2f}')
+print(f'Perda máxima esperada: {initial_portfolio - last_return_CVaR:.2f}')
 # plota o grafico da cadeia de markov de algumas simulacoes (series temporais)
 markovchain_plot(wallet_name, simulation, n=5)
+# plota o grafico da serie temporal isoladamente
+ts_plot(wallet_name, time_series, n=5)

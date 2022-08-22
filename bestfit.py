@@ -78,8 +78,15 @@ def remove_adjacent(iter):
     list = [k for k, g in itertools.groupby(iter)]
     return np.array(list)  
 
+def VaR(series, alpha = 0.05):
+    sorted = np.sort(series)
+    count = len(sorted)
+    location = round(count * alpha)
+    VaR = sorted[location - 1]
+    return VaR
+
 def CVaR(series, alpha = 0.05):
-    sorted = np.sort(remove_adjacent(series))
+    sorted = np.sort(series)
     count = len(sorted)
     location = round(count * alpha)
     VaR = sorted[location - 1]
@@ -181,6 +188,28 @@ def markovchain_plot(wallet_name, candidatos, n=5):
                             title=f"Cadeia de Markov da simulação {i+1}. Taxa de aceitação: {acc_rate:.2f}%, "
                             f"{len(remove_adjacent(candidatos[i].todos))} candidatos propostos.")
         fig.write_image(f"imagens/mcmc_simulacao{i+1}_{wallet_name}.png")
+        fig.show()
+
+### plot series temporais individuais especificas ###
+def ts_plot(wallet_name, time_series, n=5):
+    color = '#3a86ff'
+
+    length = len(time_series)
+    chosen = np.linspace(0, length-1, n).astype(int)
+
+    for i in chosen:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x = np.arange(1, len(time_series[i])+1, 1), 
+                        y = time_series[i],
+                        hoverinfo = 'x+y',
+                        mode='lines',
+                        line=dict(color=color,
+                        width=1),
+                        showlegend=False,
+                        ))
+        fig.update_layout(template='none', width=1200, height=800, margin=dict(l=35,r=15,b=35,t=15,pad=0), 
+                            xaxis_title="Dias")
+        fig.write_image(f"imagens/st{i+1}_{wallet_name}.png")
         fig.show()
 
 
